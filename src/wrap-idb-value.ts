@@ -231,7 +231,7 @@ export function wrap<T>(value: IDBRequest<T>): Promise<T>;
 export function wrap(value: any): any {
   // We sometimes generate multiple promises from a single IDBRequest (eg when cursoring), because
   // IDB is weird and a single IDBRequest can yield many responses, so these can't be cached.
-  if (value instanceof IDBRequest) return promisifyRequest(value);
+  if (value instanceof IDBRequest || (value && value.toString() === "[object IDBRequest]")) return promisifyRequest(value);
 
   // If we've already transformed this value before, reuse the transformed value.
   // This is faster, but it also provides object equality.
