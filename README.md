@@ -1,9 +1,10 @@
 # IndexedDB with usability.
 
-This is a tiny (~1.08k brotli'd) library that mostly mirrors the IndexedDB API, but with small improvements that make a big difference to usability.
+This is a tiny (~1.09k brotli'd) library that mostly mirrors the IndexedDB API, but with small improvements that make a big difference to usability.
 
 1. [Installation](#installation)
 1. [Changes](#changes)
+1. [Browser support](#browser-support)
 1. [API](#api)
    1. [`openDB`](#opendb)
    1. [`deleteDB`](#deletedb)
@@ -35,7 +36,7 @@ async function doDatabaseStuff() {
 }
 ```
 
-## Directly In a browser
+## Directly in a browser
 
 ### Using the modules method directly via unpkg:
 
@@ -52,7 +53,7 @@ async function doDatabaseStuff() {
 ### Using external script reference
 
 ```html
-<script src="https://unpkg.com/idb@5/build/iife/index-min.js"></script>
+<script src="https://unpkg.com/idb/build/iife/index-min.js"></script>
 <script>
   async function doDatabaseStuff() {
     const db = await idb.openDB(…);
@@ -60,9 +61,17 @@ async function doDatabaseStuff() {
 </script>
 ```
 
+A global, `idb`, will be created, containing all exports of the module version.
+
 # Changes
 
 [See details of (potentially) breaking changes](changes.md).
+
+# Browser support
+
+This library targets modern browsers, as in Chrome, Firefox, Safari, and other browsers that use those engines, such as Edge. IE is not supported.
+
+If you want to target much older versions of those browsers, you can transpile the library using something like [Babel](https://babeljs.io/). You can't transpile the library for IE, as it relies on a proper implementation of [JavaScript proxies](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Proxy).
 
 # API
 
@@ -260,6 +269,8 @@ Async iterator support isn't included by default (Edge doesn't support them). To
 import { openDB } from 'idb/with-async-ittr.js';
 ```
 
+Or `https://unpkg.com/idb/build/iife/with-async-ittr-min.js` if you're using the non-module version.
+
 Now you can iterate over stores, indexes, and cursors:
 
 ```js
@@ -309,23 +320,21 @@ const dbPromise = openDB('keyval-store', 1, {
   },
 });
 
-const idbKeyval = {
-  async get(key) {
-    return (await dbPromise).get('keyval', key);
-  },
-  async set(key, val) {
-    return (await dbPromise).put('keyval', val, key);
-  },
-  async delete(key) {
-    return (await dbPromise).delete('keyval', key);
-  },
-  async clear() {
-    return (await dbPromise).clear('keyval');
-  },
-  async keys() {
-    return (await dbPromise).getAllKeys('keyval');
-  },
-};
+export async function get(key) {
+  return (await dbPromise).get('keyval', key);
+},
+export async function set(key, val) {
+  return (await dbPromise).put('keyval', val, key);
+},
+export async function del(key) {
+  return (await dbPromise).delete('keyval', key);
+},
+export async function clear() {
+  return (await dbPromise).clear('keyval');
+},
+export async function keys() {
+  return (await dbPromise).getAllKeys('keyval');
+},
 ```
 
 ## Article store

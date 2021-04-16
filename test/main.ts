@@ -12,7 +12,7 @@ import {
   TypedDOMStringList,
   openDB,
   DBSchema,
-} from '../src/';
+} from '../src';
 import { assert as typeAssert, IsExact } from 'conditional-type-checks';
 import {
   deleteDatabase,
@@ -537,6 +537,31 @@ suite('IDBPDatabase', () => {
     }
   });
 
+  test('add - avoid unhandled rejection', async () => {
+    let unhandledRejection = false;
+    let errored = false;
+    const onUnhandledRejection = () => (unhandledRejection = true);
+
+    self.addEventListener('unhandledrejection', onUnhandledRejection);
+
+    const schemaDB = await openDBWithData();
+    db = schemaDB as IDBPDatabase;
+
+    try {
+      await schemaDB.add('key-val-store', 123, 'foo');
+    } catch (err) {
+      errored = true;
+    }
+
+    // Wait for a frame so tasks are processed
+    await new Promise((r) => requestAnimationFrame(r));
+
+    assert.isTrue(errored, 'Add errored');
+    assert.isFalse(unhandledRejection, 'No unhandled rejection');
+
+    self.removeEventListener('unhandledrejection', onUnhandledRejection);
+  });
+
   test('delete', async () => {
     const schemaDB = await openDBWithData();
     db = schemaDB as IDBPDatabase;
@@ -591,6 +616,17 @@ suite('IDBPTransaction', () => {
 
   teardown('Close DB', async () => {
     if (db) db.close();
+  });
+
+  test('mode', async () => {
+    const schemaDB = await openDBWithSchema();
+    db = schemaDB as IDBPDatabase;
+    const tx1 = schemaDB.transaction('key-val-store');
+    const tx2 = schemaDB.transaction('key-val-store', 'readonly');
+    const tx3 = schemaDB.transaction('key-val-store', 'readwrite');
+
+    typeAssert<IsExact<typeof tx1, typeof tx2>>(true);
+    typeAssert<IsExact<typeof tx1, typeof tx3>>(false);
   });
 
   test('objectStoreNames', async () => {
@@ -804,6 +840,69 @@ suite('IDBPObjectStore', () => {
     await deleteDatabase();
   });
 
+  test('mode', async () => {
+    const schemaDB = await openDBWithSchema();
+    db = schemaDB as IDBPDatabase;
+    const store1 = schemaDB.transaction('key-val-store', 'readonly').store;
+    const store2 = schemaDB.transaction('key-val-store', 'readwrite').store;
+
+    typeAssert<
+      IsExact<
+        typeof store1,
+        IDBPObjectStore<
+          TestDBSchema,
+          ['key-val-store'],
+          'key-val-store',
+          'readonly'
+        >
+      >
+    >(true);
+    typeAssert<
+      IsExact<
+        typeof store2,
+        IDBPObjectStore<
+          TestDBSchema,
+          ['key-val-store'],
+          'key-val-store',
+          'readwrite'
+        >
+      >
+    >(true);
+
+    typeAssert<IsExact<typeof store1.add, undefined>>(true);
+    typeAssert<IsExact<typeof store1.put, undefined>>(true);
+    typeAssert<IsExact<typeof store1.delete, undefined>>(true);
+    typeAssert<IsExact<typeof store1.clear, undefined>>(true);
+    typeAssert<IsExact<typeof store1.createIndex, undefined>>(true);
+
+    typeAssert<
+      IsExact<
+        typeof store2.add,
+        (
+          value: number,
+          key?: string | IDBKeyRange | undefined,
+        ) => Promise<string>
+      >
+    >(true);
+    typeAssert<
+      IsExact<
+        typeof store2.put,
+        (
+          value: number,
+          key?: string | IDBKeyRange | undefined,
+        ) => Promise<string>
+      >
+    >(true);
+    typeAssert<
+      IsExact<
+        typeof store2.delete,
+        (key: string | IDBKeyRange) => Promise<void>
+      >
+    >(true);
+    typeAssert<IsExact<typeof store2.clear, () => Promise<void>>>(true);
+    typeAssert<IsExact<typeof store2.createIndex, undefined>>(true);
+  });
+
   test('indexNames', async () => {
     const schemaDB = await openDBWithSchema();
     db = schemaDB as IDBPDatabase;
@@ -826,7 +925,9 @@ suite('IDBPObjectStore', () => {
 
     const newDB = await openDB<RenamedDBSchema>(dbName, getNextVersion(), {
       upgrade(db, oldVersion, newVersion, tx) {
-        const store = (tx as IDBPTransaction).objectStore('key-val-store');
+        const store = ((tx as unknown) as IDBPTransaction).objectStore(
+          'key-val-store',
+        );
         store.name = 'key-val-store-renamed';
       },
     });
@@ -953,7 +1054,7 @@ suite('IDBPObjectStore', () => {
     typeAssert<
       IsExact<
         Parameters<typeof store1.count>[0],
-        string | IDBKeyRange | undefined
+        string | IDBKeyRange | undefined | null
       >
     >(true);
 
@@ -968,7 +1069,7 @@ suite('IDBPObjectStore', () => {
     typeAssert<
       IsExact<
         Parameters<typeof store2.count>[0],
-        IDBValidKey | IDBKeyRange | undefined
+        IDBValidKey | IDBKeyRange | undefined | null
       >
     >(true);
 
@@ -979,19 +1080,26 @@ suite('IDBPObjectStore', () => {
     assert.strictEqual(val2, 4, 'Correct count');
   });
 
-  test('createIndex', async () => {
-    const schemaDB = await openDBWithData();
-    db = schemaDB as IDBPDatabase;
+  test('createIndex (db with DBTypes)', async () => {
+    db = (await openDB<TestDBSchema>(dbName, getNextVersion(), {
+      upgrade(db, oldVersion, newVersion, tx) {
+        const store = db.createObjectStore('object-store');
+        typeAssert<
+          IsExact<Parameters<typeof store.createIndex>[0], 'date' | 'title'>
+        >(true);
+      },
+    })) as IDBPDatabase;
+  });
 
-    const store1 = schemaDB.transaction('object-store').store;
-
-    typeAssert<
-      IsExact<Parameters<typeof store1.createIndex>[0], 'date' | 'title'>
-    >(true);
-
-    const store2 = db.transaction('object-store').store;
-
-    typeAssert<IsExact<Parameters<typeof store2.createIndex>[0], string>>(true);
+  test('createIndex (db without DBTypes)', async () => {
+    db = (await openDB(dbName, getNextVersion(), {
+      upgrade(db, oldVersion, newVersion, tx) {
+        const store = db.createObjectStore('object-store');
+        typeAssert<IsExact<Parameters<typeof store.createIndex>[0], string>>(
+          true,
+        );
+      },
+    })) as IDBPDatabase;
   });
 
   test('delete', async () => {
@@ -1060,7 +1168,7 @@ suite('IDBPObjectStore', () => {
     typeAssert<
       IsExact<
         Parameters<typeof store1.getAll>[0],
-        string | IDBKeyRange | undefined
+        string | IDBKeyRange | undefined | null
       >
     >(true);
 
@@ -1075,7 +1183,7 @@ suite('IDBPObjectStore', () => {
     typeAssert<
       IsExact<
         Parameters<typeof store2.getAll>[0],
-        IDBValidKey | IDBKeyRange | undefined
+        IDBValidKey | IDBKeyRange | undefined | null
       >
     >(true);
 
@@ -1096,7 +1204,7 @@ suite('IDBPObjectStore', () => {
     typeAssert<
       IsExact<
         Parameters<typeof store1.getAllKeys>[0],
-        string | IDBKeyRange | undefined
+        string | IDBKeyRange | undefined | null
       >
     >(true);
 
@@ -1115,7 +1223,7 @@ suite('IDBPObjectStore', () => {
     typeAssert<
       IsExact<
         Parameters<typeof store2.getAllKeys>[0],
-        IDBValidKey | IDBKeyRange | undefined
+        IDBValidKey | IDBKeyRange | undefined | null
       >
     >(true);
 
@@ -1184,7 +1292,7 @@ suite('IDBPObjectStore', () => {
     typeAssert<
       IsExact<
         Parameters<typeof store1.openCursor>[0],
-        string | IDBKeyRange | undefined
+        string | IDBKeyRange | undefined | null
       >
     >(true);
 
@@ -1209,7 +1317,7 @@ suite('IDBPObjectStore', () => {
     typeAssert<
       IsExact<
         Parameters<typeof store2.openCursor>[0],
-        IDBValidKey | IDBKeyRange | undefined
+        IDBValidKey | IDBKeyRange | undefined | null
       >
     >(true);
 
@@ -1240,7 +1348,7 @@ suite('IDBPObjectStore', () => {
     typeAssert<
       IsExact<
         Parameters<typeof store1.openKeyCursor>[0],
-        string | IDBKeyRange | undefined
+        string | IDBKeyRange | undefined | null
       >
     >(true);
 
@@ -1263,7 +1371,7 @@ suite('IDBPObjectStore', () => {
     typeAssert<
       IsExact<
         Parameters<typeof store2.openKeyCursor>[0],
-        IDBValidKey | IDBKeyRange | undefined
+        IDBValidKey | IDBKeyRange | undefined | null
       >
     >(true);
 
@@ -1377,6 +1485,27 @@ suite('IDBPIndex', () => {
     await deleteDatabase();
   });
 
+  test('mode', async () => {
+    db = (await openDB<TestDBSchema>(dbName, getNextVersion(), {
+      upgrade(db, oldVersion, newVersion, tx) {
+        const store = db.createObjectStore('object-store');
+        const index = store.createIndex('date', 'date');
+        typeAssert<
+          IsExact<
+            typeof index,
+            IDBPIndex<
+              TestDBSchema,
+              ['object-store'],
+              'object-store',
+              'date',
+              'versionchange'
+            >
+          >
+        >(true);
+      },
+    })) as IDBPDatabase;
+  });
+
   test('objectStore', async () => {
     const schemaDB = await openDBWithSchema();
     db = schemaDB as IDBPDatabase;
@@ -1442,7 +1571,7 @@ suite('IDBPIndex', () => {
     typeAssert<
       IsExact<
         Parameters<typeof index1.count>[0],
-        Date | IDBKeyRange | undefined
+        Date | IDBKeyRange | undefined | null
       >
     >(true);
 
@@ -1457,7 +1586,7 @@ suite('IDBPIndex', () => {
     typeAssert<
       IsExact<
         Parameters<typeof index2.count>[0],
-        IDBValidKey | IDBKeyRange | undefined
+        IDBValidKey | IDBKeyRange | undefined | null
       >
     >(true);
 
@@ -1524,7 +1653,7 @@ suite('IDBPIndex', () => {
       typeAssert<
         IsExact<
           Parameters<typeof index.getAll>[0],
-          Date | IDBKeyRange | undefined
+          Date | IDBKeyRange | undefined | null
         >
       >(true);
 
@@ -1566,7 +1695,7 @@ suite('IDBPIndex', () => {
       typeAssert<
         IsExact<
           Parameters<typeof index.getAll>[0],
-          IDBValidKey | IDBKeyRange | undefined
+          IDBValidKey | IDBKeyRange | undefined | null
         >
       >(true);
 
@@ -1614,7 +1743,7 @@ suite('IDBPIndex', () => {
       typeAssert<
         IsExact<
           Parameters<typeof index.getAllKeys>[0],
-          Date | IDBKeyRange | undefined
+          Date | IDBKeyRange | undefined | null
         >
       >(true);
 
@@ -1631,7 +1760,7 @@ suite('IDBPIndex', () => {
       typeAssert<
         IsExact<
           Parameters<typeof index.getAllKeys>[0],
-          IDBValidKey | IDBKeyRange | undefined
+          IDBValidKey | IDBKeyRange | undefined | null
         >
       >(true);
 
@@ -1688,7 +1817,7 @@ suite('IDBPIndex', () => {
       typeAssert<
         IsExact<
           Parameters<typeof index.openCursor>[0],
-          Date | IDBKeyRange | undefined
+          Date | IDBKeyRange | undefined | null
         >
       >(true);
 
@@ -1715,7 +1844,7 @@ suite('IDBPIndex', () => {
       typeAssert<
         IsExact<
           Parameters<typeof index.openCursor>[0],
-          IDBValidKey | IDBKeyRange | undefined
+          IDBValidKey | IDBKeyRange | undefined | null
         >
       >(true);
 
@@ -1747,7 +1876,7 @@ suite('IDBPIndex', () => {
       typeAssert<
         IsExact<
           Parameters<typeof index.openKeyCursor>[0],
-          Date | IDBKeyRange | undefined
+          Date | IDBKeyRange | undefined | null
         >
       >(true);
 
@@ -1774,7 +1903,7 @@ suite('IDBPIndex', () => {
       typeAssert<
         IsExact<
           Parameters<typeof index.openKeyCursor>[0],
-          IDBValidKey | IDBKeyRange | undefined
+          IDBValidKey | IDBKeyRange | undefined | null
         >
       >(true);
 
@@ -1832,6 +1961,25 @@ suite('IDBPCursor', () => {
   teardown('Close DB', async () => {
     if (db) db.close();
     await deleteDatabase();
+  });
+
+  test('mode', async () => {
+    const schemaDB = await openDBWithSchema();
+    db = schemaDB as IDBPDatabase;
+    const store = schemaDB.transaction('object-store', 'readwrite').store;
+    const cursor = store.openCursor();
+    typeAssert<
+      IsExact<
+        typeof cursor,
+        Promise<IDBPCursorWithValue<
+          TestDBSchema,
+          ['object-store'],
+          'object-store',
+          unknown,
+          'readwrite'
+        > | null>
+      >
+    >(true);
   });
 
   test('key', async () => {
