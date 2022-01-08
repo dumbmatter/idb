@@ -413,11 +413,12 @@ interface MyDB extends DBSchema {
   };
   products: {
     value: {
-      name: string;
+      id: number;
       price: number;
       productCode: string;
     };
-    key: string;
+    key: number;
+    autoIncrementKeyPath: "id",
     indexes: { 'by-price': number };
   };
 }
@@ -428,7 +429,8 @@ async function demo() {
       db.createObjectStore('favourite-number');
 
       const productStore = db.createObjectStore('products', {
-        keyPath: 'productCode',
+        keyPath: 'id',
+        autoIncrement: true,
       });
       productStore.createIndex('by-price', 'price');
     },
@@ -438,6 +440,12 @@ async function demo() {
   await db.put('favourite-number', 7, 'Jen');
   // This fails at compile time, as the 'favourite-number' store expects a number.
   await db.put('favourite-number', 'Twelve', 'Jake');
+
+  // If a store has an auto incrementing key specified in autoIncrementKeyPath, that field is optional when writing to the database
+  await db.put('products', {
+    price: 15,
+    productCode: 'my-product',
+  });
 }
 ```
 
