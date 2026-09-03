@@ -64,6 +64,58 @@ suite('IDBPDatabase', () => {
     );
   });
 
+  test('createObjectStore with mandatory optionalParameters', async () => {
+    db = (await openDB<TestDBSchema>(dbName, getNextVersion(), {
+      upgrade(db) {
+        try {
+          db.createObjectStore('object-store');
+
+          db.createObjectStore('object-store', {
+            autoIncrement: true,
+          });
+
+          db.createObjectStore('object-store', {
+            keyPath: "foo",
+          });
+
+          db.createObjectStore('object-store', {
+            autoIncrement: true,
+            keyPath: "foo",
+          });
+
+          // @ts-expect-error optionalParameters is required for an auto incrementing store
+          db.createObjectStore('auto-increment');
+
+          // @ts-expect-error autoIncrement and keyPath are required
+          db.createObjectStore('auto-increment', {
+            autoIncrement: true,
+          });
+
+          // @ts-expect-error autoIncrement and keyPath are required
+          db.createObjectStore('auto-increment', {
+            keyPath: "id",
+          });
+
+          db.createObjectStore('auto-increment', {
+            autoIncrement: true,
+            // @ts-expect-error keyPath must be corect
+            keyPath: "foo",
+          });
+
+          // Finally this works
+          db.createObjectStore('auto-increment', {
+            autoIncrement: true,
+            keyPath: "id",
+          });
+        } catch (error) {
+          // Above code fails at runtime due to creating many stores with the same name, but is useful for checking the types with TypeScript
+          assert.instanceOf(error, DOMException);
+          assert.strictEqual((error as DOMException).name, 'ConstraintError');
+        }
+      },
+    })) as IDBPDatabase;
+  });
+
   test('deleteObjectStore', async () => {
     const schemaDB = await openDBWithSchema();
     db = schemaDB as IDBPDatabase;
